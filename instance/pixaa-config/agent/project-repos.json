@@ -1,0 +1,10 @@
+{
+  "console": {
+    "url": "https://github.com/platex-rehor-bot/console.git",
+    "upstream": "https://github.com/openshift/console.git"
+  },
+  "console-operator": {
+    "url": "https://github.com/platex-rehor-bot/console-operator.git",
+    "upstream": "https://github.com/openshift/console-operator.git"
+  }
+}

@@ -1,0 +1,9 @@
+workflow: jira-kanban
+source: jira
+envs:
+  - node
+  - browser
+  - go
+  - patternfly-mcp
+claude_md:
+  strategy: append
