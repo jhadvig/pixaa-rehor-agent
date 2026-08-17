@@ -1,0 +1,729 @@
+#!/usr/bin/env python3
+"""Preflight: find MODIFIED bugs needing backports and dry-run cherry-pick.
+
+Queries Jira for OCPBUGS bugs that:
+  - status = MODIFIED (fix merged on master)
+  - have Target Backport Versions set
+  - component = Management Console
+  - assigned to RH konflux Platform Experience services
+
+Uses repo: labels on the bug to determine which repo (console or console-operator).
+
+For each bug, finds the merged PR, determines which versions still need
+backporting, and dry-runs cherry-pick to classify as CLEAN or CONFLICTS.
+
+Outputs "start" with structured prompt data if actionable work is found.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.request
+
+from common import (
+    get_capacity,
+    get_tasks,
+    load_project_repos,
+    output_result,
+    upstream_repo,
+)
+
+# --- Configuration ---
+
+JIRA_COMPONENT = "Management Console"
+JIRA_ASSIGNEE = "RH konflux Platform Experience services"
+
+REPO_LABEL_MAP = {
+    "repo:console": "console",
+    "repo:console-operator": "console-operator",
+}
+
+BACKPORT_TASK_PREFIX = "backport:"
+
+DEFAULT_BRANCHES = {
+    "console": "main",
+    "console-operator": "main",
+}
+
+TARGET_BACKPORT_VERSIONS_FIELD = "customfield_10878"
+
+BOT_LABEL = os.environ.get("BOT_LABEL", "rehor-ai-pixaa")
+
+
+# --- Version helpers ---
+
+def normalize_version(version_str):
+    """Normalize version string to release branch name.
+
+    4.22.z / 4.22 / 4.22.0 -> release-4.22
+    5.0.z / 5.0 / 5.0.0 -> release-5.0
+    """
+    v = version_str.strip()
+    # Strip only the third segment (.z, .x, .0) if present: 4.22.z -> 4.22, 5.0.0 -> 5.0
+    v = re.sub(r"(\d+\.\d+)\.[zx0]$", r"\1", v)
+    if not v.startswith("release-"):
+        v = "release-" + v
+    return v
+
+
+def version_sort_key(branch_name):
+    """Sort key for release branches, newest first.
+
+    release-5.0 > release-4.22 > release-4.21
+    """
+    m = re.match(r"release-(\d+)\.(\d+)", branch_name)
+    if not m:
+        return (0, 0)
+    return (int(m.group(1)), int(m.group(2)))
+
+
+# --- GitHub helpers ---
+
+def gh_json(args, timeout=30):
+    """Run gh CLI command and parse JSON output."""
+    try:
+        proc = subprocess.run(
+            ["gh"] + args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode != 0:
+            print(
+                f"  gh {' '.join(args[:3])}... failed: {proc.stderr[:200]}",
+                file=sys.stderr,
+            )
+            return None
+        return json.loads(proc.stdout) if proc.stdout.strip() else None
+    except (subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        print(f"  gh error: {e}", file=sys.stderr)
+        return None
+
+
+def find_merged_pr(repo, bug_key):
+    """Find the merged PR for a bug by searching PR titles."""
+    prs = gh_json([
+        "pr", "list", "--repo", repo,
+        "--state", "merged", "--search", bug_key,
+        "--json", "number,url,title",
+        "--limit", "5",
+    ])
+    if not prs:
+        return None
+    for pr in prs:
+        title = pr.get("title", "")
+        if title.startswith(bug_key + ":") or title.startswith(bug_key + " "):
+            return pr
+    return None
+
+
+def get_pr_commits(repo, pr_number):
+    """Get all commit SHAs from a PR, in order."""
+    data = gh_json([
+        "pr", "view", str(pr_number), "--repo", repo,
+        "--json", "commits",
+    ])
+    if not data or "commits" not in data:
+        return []
+    return [c["oid"] for c in data["commits"]]
+
+
+def find_existing_backport_pr(repo, bug_key, release_branch):
+    """Check if a backport PR already exists for this bug+branch."""
+    prs = gh_json([
+        "pr", "list", "--repo", repo,
+        "--base", release_branch,
+        "--search", bug_key,
+        "--state", "all",
+        "--json", "number,url,title,state",
+        "--limit", "5",
+    ])
+    if not prs:
+        return None
+    for pr in prs:
+        if bug_key in pr.get("title", ""):
+            return pr
+    return None
+
+
+def check_branch_exists(repo, branch):
+    """Check if a branch exists on the upstream repo."""
+    proc = subprocess.run(
+        ["gh", "api", f"repos/{repo}/branches/{branch}", "--jq", ".name"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return proc.returncode == 0
+
+
+# --- Cherry-pick dry-run ---
+
+def dry_run_cherry_pick(upstream, release_branch, source_branch, commit_shas):
+    """Dry-run cherry-pick commits onto release branch in a temp clone.
+
+    Returns dict with:
+        result: "clean" | "conflicts" | "error"
+        conflicting_files: list of file paths (if conflicts)
+        error: error message (if error)
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo_dir = os.path.join(tmpdir, "repo")
+        try:
+            subprocess.run(
+                [
+                    "git", "clone", "--no-checkout", "--filter=blob:none",
+                    f"https://github.com/{upstream}.git", repo_dir,
+                ],
+                capture_output=True, text=True, timeout=120, check=True,
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "fetch", "origin", release_branch],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "fetch", "origin", source_branch],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "checkout", f"origin/{release_branch}"],
+                capture_output=True, text=True, timeout=30, check=True,
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "config", "user.email", "bot@test.com"],
+                capture_output=True, text=True, check=True,
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "config", "user.name", "bot"],
+                capture_output=True, text=True, check=True,
+            )
+
+            result = subprocess.run(
+                ["git", "-C", repo_dir, "cherry-pick", "--no-commit"] + commit_shas,
+                capture_output=True, text=True, timeout=60,
+            )
+
+            if result.returncode == 0:
+                subprocess.run(
+                    ["git", "-C", repo_dir, "reset", "--hard"],
+                    capture_output=True, text=True,
+                )
+                return {"result": "clean", "conflicting_files": []}
+
+            diff_result = subprocess.run(
+                ["git", "-C", repo_dir, "diff", "--name-only", "--diff-filter=U"],
+                capture_output=True, text=True, timeout=10,
+            )
+            conflicting = (
+                diff_result.stdout.strip().split("\n")
+                if diff_result.stdout.strip()
+                else []
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "cherry-pick", "--abort"],
+                capture_output=True, text=True,
+            )
+            return {"result": "conflicts", "conflicting_files": conflicting}
+
+        except subprocess.CalledProcessError as e:
+            msg = e.stderr[:200] if e.stderr else str(e)
+            print(f"  git error during dry-run: {msg}", file=sys.stderr)
+            return {"result": "error", "conflicting_files": [], "error": msg}
+        except subprocess.TimeoutExpired:
+            return {
+                "result": "error",
+                "conflicting_files": [],
+                "error": "timeout",
+            }
+
+
+# --- Jira helpers ---
+
+def jira_mcp_call(method, params):
+    """Call Jira MCP server via HTTP POST.
+
+    The MCP server runs at $JIRA_MCP_URL and accepts JSON-RPC requests.
+    """
+    url = os.environ.get("JIRA_MCP_URL", "http://devbot-proxy:8444/mcp")
+
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": method,
+            "arguments": params,
+        },
+    }).encode()
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            result = data.get("result", {})
+            if isinstance(result, dict) and "content" in result:
+                for item in result["content"]:
+                    if item.get("type") == "text":
+                        return json.loads(item["text"])
+            return result
+    except Exception as e:
+        print(f"  Jira MCP error ({method}): {e}", file=sys.stderr)
+        return None
+
+
+def search_modified_bugs():
+    """Search for MODIFIED bugs with Target Backport Versions set."""
+    data = jira_mcp_call(
+        "jira_search",
+        {
+            "jql": (
+                f'project = OCPBUGS AND status = MODIFIED '
+                f'AND component = "{JIRA_COMPONENT}" '
+                f'AND assignee = "{JIRA_ASSIGNEE}" '
+                f'AND "Target Backport Versions" IS NOT EMPTY '
+                f'ORDER BY priority DESC, updated DESC'
+            ),
+            "limit": 20,
+        },
+    )
+    if not data:
+        return []
+    if isinstance(data, list):
+        return data
+    return data.get("issues", data.get("results", []))
+
+
+def get_backport_versions(issue):
+    """Extract Target Backport Versions from issue fields."""
+    fields = issue.get("fields", issue)
+    versions_raw = fields.get(TARGET_BACKPORT_VERSIONS_FIELD, [])
+    if not versions_raw:
+        return []
+    versions = []
+    for v in versions_raw:
+        if isinstance(v, dict):
+            versions.append(v.get("name", ""))
+        elif isinstance(v, str):
+            versions.append(v)
+    return [v for v in versions if v]
+
+
+def get_repo_from_labels(issue):
+    """Determine repo from issue's repo: labels."""
+    fields = issue.get("fields", issue)
+    labels = fields.get("labels", [])
+    for label in labels:
+        label_str = label if isinstance(label, str) else label.get("name", "")
+        if label_str in REPO_LABEL_MAP:
+            return REPO_LABEL_MAP[label_str]
+    return None
+
+
+# --- Main logic ---
+
+def process_bug(bug, repos, tasks):
+    """Process a single bug and return actionable item or None."""
+    bug_key = bug.get("key", "")
+    fields = bug.get("fields", bug)
+    summary = fields.get("summary", bug.get("summary", ""))
+
+    raw_labels = fields.get("labels", [])
+    bug_labels = [
+        (l if isinstance(l, str) else l.get("name", "")) for l in raw_labels
+    ]
+
+    components = fields.get("components", [])
+    bug_component = ""
+    if components:
+        bug_component = (
+            components[0].get("name", "")
+            if isinstance(components[0], dict)
+            else str(components[0])
+        )
+
+    repo_name = get_repo_from_labels(bug)
+    if not repo_name:
+        print(f"  {bug_key}: no repo: label found, skip", file=sys.stderr)
+        return None
+
+    repo_cfg = repos.get(repo_name)
+    if not repo_cfg:
+        print(f"  {bug_key}: repo {repo_name} not in project-repos.json", file=sys.stderr)
+        return None
+
+    up, host = upstream_repo(repo_name)
+    if not up or host != "github":
+        print(f"  {bug_key}: non-github repo, skip", file=sys.stderr)
+        return None
+
+    versions = get_backport_versions(bug)
+    if not versions:
+        print(f"  {bug_key}: no target backport versions, skip", file=sys.stderr)
+        return None
+
+    pr = find_merged_pr(up, bug_key)
+    if not pr:
+        print(f"  {bug_key}: no merged PR found, skip", file=sys.stderr)
+        return None
+
+    pr_number = pr["number"]
+    pr_url = pr["url"]
+    commit_shas = get_pr_commits(up, pr_number)
+    if not commit_shas:
+        print(f"  {bug_key}: no commits in PR #{pr_number}, skip", file=sys.stderr)
+        return None
+
+    version_branches = []
+    for v in versions:
+        branch = normalize_version(v)
+        version_branches.append({"version": v, "branch": branch})
+    version_branches.sort(key=lambda x: version_sort_key(x["branch"]), reverse=True)
+
+    default_branch = DEFAULT_BRANCHES.get(repo_name, "main")
+
+    all_versions = []
+    next_actionable = None
+    prev_completed_branch = None
+
+    for vb in version_branches:
+        version = vb["version"]
+        branch = vb["branch"]
+        status_info = {"version": version, "branch": branch, "status": "unknown"}
+
+        if not check_branch_exists(up, branch):
+            status_info["status"] = "branch_missing"
+            all_versions.append(status_info)
+            continue
+
+        existing_pr = find_existing_backport_pr(up, bug_key, branch)
+        if existing_pr:
+            pr_state = existing_pr.get("state", "").upper()
+            if pr_state == "MERGED":
+                status_info["status"] = "done"
+                prev_completed_branch = branch
+            elif pr_state == "CLOSED":
+                status_info["status"] = "skipped"
+            else:
+                status_info["status"] = "pr_open"
+            status_info["pr"] = existing_pr
+            all_versions.append(status_info)
+            continue
+
+        status_info["status"] = "pending"
+        all_versions.append(status_info)
+
+        if next_actionable is None:
+            source = prev_completed_branch if prev_completed_branch else default_branch
+            next_actionable = {
+                "version": version,
+                "branch": branch,
+                "source_branch": source,
+            }
+
+    if next_actionable is None:
+        print(f"  {bug_key}: all versions handled, skip", file=sys.stderr)
+        return None
+
+    print(
+        f"  {bug_key}: dry-run cherry-pick to {next_actionable['branch']}...",
+        file=sys.stderr,
+    )
+    cherry_pick = dry_run_cherry_pick(
+        upstream=up,
+        release_branch=next_actionable["branch"],
+        source_branch=next_actionable["source_branch"],
+        commit_shas=commit_shas,
+    )
+
+    if cherry_pick["result"] == "error":
+        print(
+            f"  {bug_key}: dry-run error: {cherry_pick.get('error')}, skip",
+            file=sys.stderr,
+        )
+        return None
+
+    return {
+        "bug_key": bug_key,
+        "bug_summary": summary,
+        "bug_labels": bug_labels,
+        "bug_component": bug_component,
+        "repo": repo_name,
+        "upstream": up,
+        "fork_url": repo_cfg.get("url", ""),
+        "default_branch": default_branch,
+        "original_pr": {
+            "number": pr_number,
+            "url": pr_url,
+            "commits": commit_shas,
+        },
+        "target_version": next_actionable["version"],
+        "release_branch": next_actionable["branch"],
+        "source_branch": next_actionable["source_branch"],
+        "cherry_pick": cherry_pick,
+        "all_versions": all_versions,
+    }
+
+
+def format_output(item):
+    """Format actionable item as structured prompt content."""
+    lines = ["## Backport Preflight", ""]
+    lines.append(f"### {item['bug_key']}: {item['bug_summary']}")
+    lines.append(f"- repo: {item['repo']} ({item['upstream']})")
+    lines.append(f"- fork: {item['fork_url']}")
+    lines.append(f"- default_branch: {item['default_branch']}")
+    lines.append(
+        f"- original_pr: #{item['original_pr']['number']} ({item['original_pr']['url']})"
+    )
+    lines.append(f"- commits: {', '.join(item['original_pr']['commits'])}")
+    lines.append(f"- component: {item['bug_component']}")
+    lines.append(f"- labels: {', '.join(item['bug_labels'])}")
+    all_version_strs = [v["version"] for v in item["all_versions"]]
+    lines.append(f"- target_versions: {', '.join(all_version_strs)}")
+    lines.append("")
+    lines.append(
+        f"**Target: {item['target_version']}** -> {item['release_branch']}"
+    )
+    lines.append(f"- source: {item['source_branch']}")
+    lines.append(
+        f"- cherry-pick: **{item['cherry_pick']['result'].upper()}**"
+    )
+    if item["cherry_pick"].get("conflicting_files"):
+        lines.append(
+            f"- conflicting files: {', '.join(item['cherry_pick']['conflicting_files'])}"
+        )
+    if item.get("cascade_task_key"):
+        lines.append(f"- cascade_task_key: {item['cascade_task_key']}")
+    if item.get("clone_keys"):
+        for ver, key in item["clone_keys"].items():
+            lines.append(f"- clone_key[{ver}]: {key}")
+    lines.append("")
+    lines.append("All versions:")
+    for v in item["all_versions"]:
+        extra = ""
+        if v.get("pr"):
+            extra = f" (PR #{v['pr'].get('number', '?')})"
+        lines.append(f"  {v['branch']}: {v['status']}{extra}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def process_cascade_task(task, repos, tasks):
+    """Process an existing cascade task to continue backporting.
+
+    The task stores the original bug key and target versions.
+    Returns an actionable item or None.
+    """
+    meta = task.get("metadata") or {}
+    bug_key = meta.get("original_bug", "")
+    target_versions = meta.get("target_versions", [])
+    completed = set(meta.get("completed", []))
+    delegated = set(meta.get("delegated", []))
+    clone_keys = meta.get("clone_keys", {})
+    repo_name = meta.get("repo", "")
+    bug_summary = meta.get("bug_summary", "")
+    bug_labels = meta.get("bug_labels", [])
+    bug_component = meta.get("bug_component", "")
+
+    if not bug_key or not target_versions or not repo_name:
+        return None
+
+    repo_cfg = repos.get(repo_name)
+    if not repo_cfg:
+        return None
+
+    up, host = upstream_repo(repo_name)
+    if not up or host != "github":
+        return None
+
+    # Find the original merged PR
+    pr = find_merged_pr(up, bug_key)
+    if not pr:
+        print(f"  {bug_key}: no merged PR found for cascade, skip", file=sys.stderr)
+        return None
+
+    pr_number = pr["number"]
+    pr_url = pr["url"]
+    commit_shas = get_pr_commits(up, pr_number)
+    if not commit_shas:
+        return None
+
+    default_branch = DEFAULT_BRANCHES.get(repo_name, "main")
+
+    # Build version list and check status
+    version_branches = []
+    for v in target_versions:
+        branch = normalize_version(v)
+        version_branches.append({"version": v, "branch": branch})
+    version_branches.sort(key=lambda x: version_sort_key(x["branch"]), reverse=True)
+
+    all_versions = []
+    next_actionable = None
+    prev_completed_branch = None
+
+    for vb in version_branches:
+        version = vb["version"]
+        branch = vb["branch"]
+        status_info = {"version": version, "branch": branch, "status": "unknown"}
+
+        if version in completed:
+            existing_pr = find_existing_backport_pr(up, bug_key, branch)
+            if existing_pr and existing_pr.get("state", "").upper() == "MERGED":
+                status_info["status"] = "done"
+                prev_completed_branch = branch
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                continue
+            # Marked completed but PR not merged — cascade is blocked
+            status_info["status"] = "pr_open"
+            if existing_pr:
+                status_info["pr"] = existing_pr
+            all_versions.append(status_info)
+            break
+
+        if version in delegated:
+            status_info["status"] = "delegated"
+            all_versions.append(status_info)
+            continue
+
+        if not check_branch_exists(up, branch):
+            status_info["status"] = "branch_missing"
+            all_versions.append(status_info)
+            continue
+
+        existing_pr = find_existing_backport_pr(up, bug_key, branch)
+        if existing_pr:
+            pr_state = existing_pr.get("state", "").upper()
+            if pr_state == "MERGED":
+                status_info["status"] = "done"
+                prev_completed_branch = branch
+            elif pr_state == "CLOSED":
+                status_info["status"] = "skipped"
+            else:
+                status_info["status"] = "pr_open"
+            status_info["pr"] = existing_pr
+            all_versions.append(status_info)
+            continue
+
+        status_info["status"] = "pending"
+        all_versions.append(status_info)
+
+        if next_actionable is None:
+            source = prev_completed_branch if prev_completed_branch else default_branch
+            next_actionable = {
+                "version": version,
+                "branch": branch,
+                "source_branch": source,
+            }
+
+    if next_actionable is None:
+        return None
+
+    print(
+        f"  {bug_key} (cascade): dry-run cherry-pick to {next_actionable['branch']}...",
+        file=sys.stderr,
+    )
+    cherry_pick = dry_run_cherry_pick(
+        upstream=up,
+        release_branch=next_actionable["branch"],
+        source_branch=next_actionable["source_branch"],
+        commit_shas=commit_shas,
+    )
+
+    if cherry_pick["result"] == "error":
+        print(
+            f"  {bug_key}: dry-run error: {cherry_pick.get('error')}, skip",
+            file=sys.stderr,
+        )
+        return None
+
+    return {
+        "bug_key": bug_key,
+        "bug_summary": bug_summary,
+        "bug_labels": bug_labels,
+        "bug_component": bug_component,
+        "repo": repo_name,
+        "upstream": up,
+        "fork_url": repo_cfg.get("url", ""),
+        "default_branch": default_branch,
+        "original_pr": {
+            "number": pr_number,
+            "url": pr_url,
+            "commits": commit_shas,
+        },
+        "target_version": next_actionable["version"],
+        "release_branch": next_actionable["branch"],
+        "source_branch": next_actionable["source_branch"],
+        "cherry_pick": cherry_pick,
+        "all_versions": all_versions,
+        "cascade_task_key": task.get("external_key", ""),
+        "clone_keys": clone_keys,
+    }
+
+
+def main():
+    active_n, max_n = get_capacity()
+    if active_n >= max_n:
+        output_result("skip", f"At capacity ({active_n}/{max_n})")
+        return
+
+    repos = load_project_repos()
+    tasks = get_tasks()
+
+    # Query 2: Check existing cascade tasks first (ongoing work has priority)
+    cascade_tasks = [
+        t for t in tasks
+        if (t.get("external_key") or "").startswith(BACKPORT_TASK_PREFIX)
+        and t.get("status") not in ("done", "archived")
+    ]
+    for task in cascade_tasks:
+        item = process_cascade_task(task, repos, tasks)
+        if item:
+            content = format_output(item)
+            output_result("start", content)
+            return
+
+    # Query 1: Search for new MODIFIED bugs with Target Backport Versions
+    print(
+        "Searching for MODIFIED bugs with Target Backport Versions...",
+        file=sys.stderr,
+    )
+    bugs = search_modified_bugs()
+    if not bugs:
+        if not cascade_tasks:
+            output_result("skip", "No backport work found")
+        else:
+            output_result("skip", "Cascade tasks exist but no versions are actionable")
+        return
+
+    print(f"Found {len(bugs)} MODIFIED bugs with backport targets", file=sys.stderr)
+
+    # Skip bugs that already have a cascade task
+    existing_bug_keys = {
+        k for t in cascade_tasks
+        if (k := (t.get("metadata") or {}).get("original_bug"))
+    }
+
+    for bug in bugs:
+        bug_key = bug.get("key", "")
+        if bug_key in existing_bug_keys:
+            continue
+        item = process_bug(bug, repos, tasks)
+        if item:
+            content = format_output(item)
+            output_result("start", content)
+            return
+
+    output_result(
+        "skip", "No backport work found"
+    )
+
+
+if __name__ == "__main__":
+    main()

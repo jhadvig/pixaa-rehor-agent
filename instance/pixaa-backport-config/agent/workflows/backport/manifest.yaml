@@ -1,0 +1,21 @@
+name: backport
+type: workflow
+description: Cherry-picks merged fixes to release branches, delegates conflicts to dev agent
+
+preflight:
+  - 01-check-backports.py
+
+provides:
+  claude_md: CLAUDE.md
+
+requires:
+  mcp_servers:
+    - bot-memory
+    - mcp-atlassian
+  env_vars:
+    - BOT_INSTANCE_ID
+    - GH_USER_NAME
+    - GH_USER_EMAIL
+  optional_env_vars:
+    - SLACK_WEBHOOK_URL
+    - SLACK_NOTIFY_MODE
