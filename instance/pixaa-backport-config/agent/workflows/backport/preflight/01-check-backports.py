@@ -633,6 +633,7 @@ def process_cascade_task(task, repos, tasks):
 
 def main():
     active_n, max_n = get_capacity()
+    print(f"Capacity: {active_n}/{max_n}", file=sys.stderr)
     if active_n >= max_n:
         output_result("skip", f"At capacity ({active_n}/{max_n})")
         jira_cleanup()
@@ -640,6 +641,7 @@ def main():
 
     repos = load_project_repos()
     tasks = get_tasks()
+    print(f"Tasks loaded: {len(tasks)}", file=sys.stderr)
 
     # Query 2: Check existing cascade tasks first (ongoing work has priority)
     cascade_tasks = [
@@ -647,6 +649,7 @@ def main():
         if (t.get("external_key") or "").startswith(BACKPORT_TASK_PREFIX)
         and t.get("status") not in ("done", "archived")
     ]
+    print(f"Cascade tasks: {len(cascade_tasks)}", file=sys.stderr)
     for task in cascade_tasks:
         item = process_cascade_task(task, repos, tasks)
         if item:
@@ -656,20 +659,18 @@ def main():
             return
 
     # Query 1: Search for new MODIFIED bugs with Target Backport Versions
-    print(
-        "Searching for MODIFIED bugs with Target Backport Versions...",
-        file=sys.stderr,
-    )
+    print("Querying Jira for MODIFIED/Release Pending bugs...", file=sys.stderr)
     bugs = search_modified_bugs()
+    print(f"Jira returned: {len(bugs) if bugs else 0} bugs", file=sys.stderr)
     if not bugs:
         jira_cleanup()
         if not cascade_tasks:
-            output_result("skip", "No backport work found")
+            output_result("skip", f"Jira returned 0 bugs (capacity {active_n}/{max_n}, tasks {len(tasks)})")
         else:
             output_result("skip", "Cascade tasks exist but no versions are actionable")
         return
 
-    print(f"Found {len(bugs)} MODIFIED bugs with backport targets", file=sys.stderr)
+    print(f"Found {len(bugs)} bugs with backport targets", file=sys.stderr)
 
     # Skip bugs that already have a cascade task
     existing_bug_keys = {
@@ -680,6 +681,7 @@ def main():
     for bug in bugs:
         bug_key = bug.get("key", "")
         if bug_key in existing_bug_keys:
+            print(f"  {bug_key}: already has cascade task, skip", file=sys.stderr)
             continue
         item = process_bug(bug, repos, tasks)
         if item:
@@ -690,7 +692,7 @@ def main():
 
     jira_cleanup()
     output_result(
-        "skip", "No backport work found"
+        "skip", f"Checked {len(bugs)} bugs, none actionable"
     )
 
 
