@@ -21,7 +21,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import urllib.request
 
 from common import (
     get_capacity,
@@ -30,6 +29,7 @@ from common import (
     output_result,
     upstream_repo,
 )
+from jira_mcp import jira_call, jira_cleanup
 
 # --- Configuration ---
 
@@ -242,45 +242,9 @@ def dry_run_cherry_pick(upstream, release_branch, source_branch, commit_shas):
 
 # --- Jira helpers ---
 
-def jira_mcp_call(method, params):
-    """Call Jira MCP server via HTTP POST.
-
-    The MCP server runs at $JIRA_MCP_URL and accepts JSON-RPC requests.
-    """
-    url = os.environ.get("JIRA_MCP_URL", "http://devbot-proxy:8444/mcp")
-
-    payload = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": method,
-            "arguments": params,
-        },
-    }).encode()
-
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-            result = data.get("result", {})
-            if isinstance(result, dict) and "content" in result:
-                for item in result["content"]:
-                    if item.get("type") == "text":
-                        return json.loads(item["text"])
-            return result
-    except Exception as e:
-        print(f"  Jira MCP error ({method}): {e}", file=sys.stderr)
-        return None
-
-
 def search_modified_bugs():
     """Search for bugs with merged fixes that need backporting."""
-    data = jira_mcp_call(
+    data = jira_call(
         "jira_search",
         {
             "jql": (
@@ -671,6 +635,7 @@ def main():
     active_n, max_n = get_capacity()
     if active_n >= max_n:
         output_result("skip", f"At capacity ({active_n}/{max_n})")
+        jira_cleanup()
         return
 
     repos = load_project_repos()
@@ -687,6 +652,7 @@ def main():
         if item:
             content = format_output(item)
             output_result("start", content)
+            jira_cleanup()
             return
 
     # Query 1: Search for new MODIFIED bugs with Target Backport Versions
@@ -696,6 +662,7 @@ def main():
     )
     bugs = search_modified_bugs()
     if not bugs:
+        jira_cleanup()
         if not cascade_tasks:
             output_result("skip", "No backport work found")
         else:
@@ -718,8 +685,10 @@ def main():
         if item:
             content = format_output(item)
             output_result("start", content)
+            jira_cleanup()
             return
 
+    jira_cleanup()
     output_result(
         "skip", "No backport work found"
     )
