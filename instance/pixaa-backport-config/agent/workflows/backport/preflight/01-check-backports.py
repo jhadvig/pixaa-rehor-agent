@@ -279,12 +279,12 @@ def jira_mcp_call(method, params):
 
 
 def search_modified_bugs():
-    """Search for MODIFIED bugs with Target Backport Versions set."""
+    """Search for bugs with merged fixes that need backporting."""
     data = jira_mcp_call(
         "jira_search",
         {
             "jql": (
-                f'project = OCPBUGS AND status = MODIFIED '
+                f'project = OCPBUGS AND status IN (MODIFIED, "Release Pending") '
                 f'AND component = "{JIRA_COMPONENT}" '
                 f'AND assignee = "{JIRA_ASSIGNEE}" '
                 f'AND "Target Backport Versions" IS NOT EMPTY '
