@@ -443,17 +443,22 @@ def format_output(item):
     """Format actionable item as structured prompt content."""
     lines = ["## Backport Preflight", ""]
     lines.append(f"### {item['bug_key']}: {item['bug_summary']}")
-    lines.append(f"- repo: {item['repo']} ({item['upstream']})")
-    lines.append(f"- fork: {item['fork_url']}")
-    lines.append(f"- default_branch: {item['default_branch']}")
-    lines.append(
-        f"- original_pr: #{item['original_pr']['number']} ({item['original_pr']['url']})"
-    )
-    lines.append(f"- commits: {', '.join(item['original_pr']['commits'])}")
-    lines.append(f"- component: {item['bug_component']}")
-    lines.append(f"- labels: {', '.join(item['bug_labels'])}")
+    lines.append("")
+    lines.append("**Cascade task metadata** (use these exact values for task_add/task_update):")
+    lines.append(f"- original_bug: {item['bug_key']}")
+    lines.append(f"- repo: {item['repo']}")
+    lines.append(f"- bug_summary: {item['bug_summary']}")
+    lines.append(f"- bug_component: {item['bug_component']}")
+    lines.append(f"- bug_labels: {', '.join(item['bug_labels'])}")
     all_version_strs = [v["version"] for v in item["all_versions"]]
     lines.append(f"- target_versions: {', '.join(all_version_strs)}")
+    lines.append("")
+    lines.append("**Git context:**")
+    lines.append(f"- upstream: {item['upstream']}")
+    lines.append(f"- fork: {item['fork_url']}")
+    lines.append(f"- default_branch: {item['default_branch']}")
+    lines.append(f"- original_pr: #{item['original_pr']['number']} ({item['original_pr']['url']})")
+    lines.append(f"- commits: {', '.join(item['original_pr']['commits'])}")
     lines.append("")
     lines.append(
         f"**Target: {item['target_version']}** -> {item['release_branch']}"
