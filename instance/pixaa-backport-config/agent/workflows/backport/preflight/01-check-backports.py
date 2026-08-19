@@ -644,10 +644,7 @@ def process_cascade_task(task, repos, tasks):
     if next_actionable is None:
         return None
 
-    print(
-        f"  {bug_key} (cascade): dry-run cherry-pick to {next_actionable['branch']}...",
-        file=sys.stderr,
-    )
+    pod_log(f"  Dry-run cherry-pick {next_actionable['source_branch']} -> {next_actionable['branch']}...")
     cherry_pick = dry_run_cherry_pick(
         upstream=up,
         release_branch=next_actionable["branch"],
@@ -656,10 +653,7 @@ def process_cascade_task(task, repos, tasks):
     )
 
     if cherry_pick["result"] == "error":
-        print(
-            f"  {bug_key}: dry-run error: {cherry_pick.get('error')}, skip",
-            file=sys.stderr,
-        )
+        pod_log(f"  {bug_key}: dry-run error: {cherry_pick.get('error')}")
         return None
 
     # Check if metadata was healed and needs updating
@@ -736,9 +730,13 @@ def main():
             output_result("skip", "Cascade tasks exist but no versions are actionable")
         return
 
-    # Skip bugs that already have a cascade task
+    # Skip bugs that already have a cascade task (active OR done)
+    all_cascade_tasks = [
+        t for t in tasks
+        if (t.get("external_key") or "").startswith(BACKPORT_TASK_PREFIX)
+    ]
     existing_bug_keys = {
-        k for t in cascade_tasks
+        k for t in all_cascade_tasks
         if (k := (t.get("metadata") or {}).get("original_bug"))
     }
 
