@@ -29,11 +29,11 @@ When preflight says cherry-pick is CLEAN:
    - Fields to set:
      - Project: OCPBUGS
      - Issue type: Bug
-     - Summary: same as original bug
+     - Summary: `[<release-branch>] <original bug summary>`
      - Description: `Backport of <ORIGINAL-KEY> to <version>.\n\nOriginal fix: <PR-URL>`
      - Component: same as original
      - Target Version: the z-stream version (e.g. `4.22.z`)
-     - Labels: copy from original, EXCLUDING any `rehor-ai-pixaa` and `repo:*` labels
+     - Labels: copy from original, KEEPING `rehor-ai-pixaa` and `repo:*` labels (so the dev agent maintains the PR)
    - Use `jira_create_issue_link` to add `is blocked by` link:
      - For the highest version: link to the ORIGINAL bug
      - For cascade versions: link to the next-newest version's clone bug (use `clone_keys` from preflight data to resolve the key; if not available, search Jira for the clone)
@@ -58,7 +58,7 @@ When preflight says cherry-pick is CLEAN:
      - `--repo <upstream-org/repo>` (target the upstream repo, not the fork)
      - `--head <fork-org>:bot/<clone-bug-key>` (e.g. `platex-rehor-bot:bot/OCPBUGS-10001`)
      - `--base <release-branch>`
-     - Title: `<CLONE-BUG-KEY>: <bug summary>`
+     - Title: `[<release-branch>] <CLONE-BUG-KEY>: <bug summary>`
      - Body:
        ```
        ## Bug
@@ -102,10 +102,8 @@ When preflight says cherry-pick is CLEAN:
 
 When preflight says cherry-pick has CONFLICTS:
 
-1. **Clone the Jira bug** (same as clean flow step 1, with extra labels)
-   - Same fields as clean flow, PLUS:
-   - Add labels: `rehor-ai-pixaa` and `repo:<repo-name>` (e.g. `repo:console`)
-   - These labels cause the dev agent to pick up the cloned bug.
+1. **Clone the Jira bug** (same as clean flow step 1)
+   - Same fields as clean flow (labels already include `rehor-ai-pixaa` and `repo:*` for dev agent maintenance).
 
 2. **Add delegation comment on the clone bug**
    ```
