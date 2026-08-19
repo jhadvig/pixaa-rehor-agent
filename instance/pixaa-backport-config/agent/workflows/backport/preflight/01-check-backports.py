@@ -500,27 +500,33 @@ def process_cascade_task(task, repos, tasks):
     bug_component = meta.get("bug_component", "")
 
     if not bug_key or not target_versions or not repo_name:
+        pod_log(f"  Cascade {task.get('external_key', '?')}: missing metadata (bug={bug_key}, versions={len(target_versions)}, repo={repo_name})")
         return None
 
     repo_cfg = repos.get(repo_name)
     if not repo_cfg:
+        pod_log(f"  Cascade {bug_key}: repo {repo_name} not in project-repos.json")
         return None
 
     up, host = upstream_repo(repo_name)
     if not up or host != "github":
+        pod_log(f"  Cascade {bug_key}: upstream_repo failed (up={up}, host={host})")
         return None
 
     # Find the original merged PR
     pr = find_merged_pr(up, bug_key)
     if not pr:
-        print(f"  {bug_key}: no merged PR found for cascade, skip", file=sys.stderr)
+        pod_log(f"  Cascade {bug_key}: no merged PR found on {up}")
         return None
 
     pr_number = pr["number"]
     pr_url = pr["url"]
     commit_shas = get_pr_commits(up, pr_number)
     if not commit_shas:
+        pod_log(f"  Cascade {bug_key}: no commits in PR #{pr_number}")
         return None
+
+    pod_log(f"  Cascade {bug_key}: PR #{pr_number}, {len(commit_shas)} commits, versions={target_versions}")
 
     default_branch = DEFAULT_BRANCHES.get(repo_name, "main")
 
