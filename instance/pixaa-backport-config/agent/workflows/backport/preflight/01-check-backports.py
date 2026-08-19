@@ -384,13 +384,20 @@ def process_bug(bug, repos, tasks):
             if pr_state == "MERGED":
                 status_info["status"] = "done"
                 prev_completed_branch = branch
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                continue
             elif pr_state == "CLOSED":
                 status_info["status"] = "skipped"
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                continue
             else:
+                # PR open — cascade must wait for it to merge
                 status_info["status"] = "pr_open"
-            status_info["pr"] = existing_pr
-            all_versions.append(status_info)
-            continue
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                break
 
         status_info["status"] = "pending"
         all_versions.append(status_info)
@@ -402,6 +409,8 @@ def process_bug(bug, repos, tasks):
                 "branch": branch,
                 "source_branch": source,
             }
+            # Only process one version — block cascade after first actionable
+            break
 
     if next_actionable is None:
         statuses = ",".join(f"{v['branch']}={v['status']}" for v in all_versions)
@@ -600,10 +609,24 @@ def process_cascade_task(task, repos, tasks):
             break
 
         if version in delegated:
-            status_info["status"] = "delegated"
+            clone_key = clone_keys.get(version, "")
+            existing_pr = find_existing_backport_pr(up, clone_key, branch) if clone_key else None
+            if not existing_pr:
+                existing_pr = find_existing_backport_pr(up, bug_key, branch)
+            if existing_pr and existing_pr.get("state", "").upper() == "MERGED":
+                status_info["status"] = "done"
+                prev_completed_branch = branch
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                pod_log(f"  {branch}: delegated, PR #{existing_pr.get('number', '?')} merged")
+                continue
+            # Delegated but PR not merged — cascade must wait
+            status_info["status"] = "delegated_waiting"
+            if existing_pr:
+                status_info["pr"] = existing_pr
             all_versions.append(status_info)
-            pod_log(f"  {branch}: delegated to dev agent")
-            continue
+            pod_log(f"  {branch}: delegated, PR not merged — cascade blocked")
+            break
 
         if not check_branch_exists(up, branch):
             status_info["status"] = "branch_missing"
@@ -620,14 +643,23 @@ def process_cascade_task(task, repos, tasks):
             if pr_state == "MERGED":
                 status_info["status"] = "done"
                 prev_completed_branch = branch
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                pod_log(f"  {branch}: done (PR #{existing_pr.get('number', '?')} merged)")
+                continue
             elif pr_state == "CLOSED":
                 status_info["status"] = "skipped"
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                pod_log(f"  {branch}: skipped (PR #{existing_pr.get('number', '?')} closed)")
+                continue
             else:
+                # PR open — cascade must wait
                 status_info["status"] = "pr_open"
-            status_info["pr"] = existing_pr
-            all_versions.append(status_info)
-            pod_log(f"  {branch}: {status_info['status']} (PR #{existing_pr.get('number', '?')})")
-            continue
+                status_info["pr"] = existing_pr
+                all_versions.append(status_info)
+                pod_log(f"  {branch}: pr_open — cascade blocked")
+                break
 
         status_info["status"] = "pending"
         all_versions.append(status_info)
@@ -640,6 +672,8 @@ def process_cascade_task(task, repos, tasks):
                 "branch": branch,
                 "source_branch": source,
             }
+            # Only process one version at a time
+            break
 
     if next_actionable is None:
         return None

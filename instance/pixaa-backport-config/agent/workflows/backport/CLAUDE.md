@@ -60,7 +60,7 @@ When preflight says cherry-pick is CLEAN:
      - `--repo <upstream-org/repo>` (target the upstream repo, not the fork)
      - `--head <fork-org>:bot/<clone-bug-key>` (e.g. `platex-rehor-bot:bot/OCPBUGS-10001`)
      - `--base <release-branch>`
-     - Title: `[<release-branch>] <CLONE-BUG-KEY>: <bug summary>`
+     - Title: `[<release-branch>] <CLONE-BUG-KEY>: <bug summary>` (e.g. `[release-5.0] OCPBUGS-112009: Fix flaky TestAsyncCache backend test`). This exact format is required.
      - Body:
        ```
        ## Bug
