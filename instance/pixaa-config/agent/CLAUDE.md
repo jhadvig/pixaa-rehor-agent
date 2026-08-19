@@ -10,5 +10,4 @@
 
 ## Team Conventions
 
-<!-- Fill in team-specific conventions after scaffolding -->
-<!-- Examples: version managers, test commands, PR review norms -->
+- After a PR merges, do NOT move the bug to `Release Pending`. Leave it at `MODIFIED` (set automatically by Prow). The backport agent and Prow's `jira/valid-bug` check depend on this status.
