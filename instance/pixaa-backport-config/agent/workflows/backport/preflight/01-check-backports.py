@@ -255,6 +255,7 @@ def search_modified_bugs():
                 f'ORDER BY priority DESC, updated DESC'
             ),
             "limit": 20,
+            "fields": f"summary,status,labels,components,assignee,{TARGET_BACKPORT_VERSIONS_FIELD}",
         },
     )
     if not data:
@@ -293,7 +294,10 @@ def get_repo_from_labels(issue):
 # --- Main logic ---
 
 def process_bug(bug, repos, tasks):
-    """Process a single bug and return actionable item or None."""
+    """Process a single bug and return (actionable_item, skip_reason).
+
+    Returns (dict, None) if actionable, or (None, "reason string") if skipped.
+    """
     bug_key = bug.get("key", "")
     fields = bug.get("fields", bug)
     summary = fields.get("summary", bug.get("summary", ""))
@@ -314,35 +318,29 @@ def process_bug(bug, repos, tasks):
 
     repo_name = get_repo_from_labels(bug)
     if not repo_name:
-        print(f"  {bug_key}: no repo: label found, skip", file=sys.stderr)
-        return None
+        return None, "no_repo_label"
 
     repo_cfg = repos.get(repo_name)
     if not repo_cfg:
-        print(f"  {bug_key}: repo {repo_name} not in project-repos.json", file=sys.stderr)
-        return None
+        return None, f"repo_{repo_name}_not_in_config"
 
     up, host = upstream_repo(repo_name)
     if not up or host != "github":
-        print(f"  {bug_key}: non-github repo, skip", file=sys.stderr)
-        return None
+        return None, "non_github_repo"
 
     versions = get_backport_versions(bug)
     if not versions:
-        print(f"  {bug_key}: no target backport versions, skip", file=sys.stderr)
-        return None
+        return None, "no_backport_versions"
 
     pr = find_merged_pr(up, bug_key)
     if not pr:
-        print(f"  {bug_key}: no merged PR found, skip", file=sys.stderr)
-        return None
+        return None, "no_merged_pr"
 
     pr_number = pr["number"]
     pr_url = pr["url"]
     commit_shas = get_pr_commits(up, pr_number)
     if not commit_shas:
-        print(f"  {bug_key}: no commits in PR #{pr_number}, skip", file=sys.stderr)
-        return None
+        return None, "no_commits_in_pr"
 
     version_branches = []
     for v in versions:
@@ -392,13 +390,9 @@ def process_bug(bug, repos, tasks):
             }
 
     if next_actionable is None:
-        print(f"  {bug_key}: all versions handled, skip", file=sys.stderr)
-        return None
+        statuses = ",".join(f"{v['branch']}={v['status']}" for v in all_versions)
+        return None, f"all_handled({statuses})"
 
-    print(
-        f"  {bug_key}: dry-run cherry-pick to {next_actionable['branch']}...",
-        file=sys.stderr,
-    )
     cherry_pick = dry_run_cherry_pick(
         upstream=up,
         release_branch=next_actionable["branch"],
@@ -407,11 +401,7 @@ def process_bug(bug, repos, tasks):
     )
 
     if cherry_pick["result"] == "error":
-        print(
-            f"  {bug_key}: dry-run error: {cherry_pick.get('error')}, skip",
-            file=sys.stderr,
-        )
-        return None
+        return None, f"cherrypick_error({cherry_pick.get('error', '?')})"
 
     return {
         "bug_key": bug_key,
@@ -432,7 +422,7 @@ def process_bug(bug, repos, tasks):
         "source_branch": next_actionable["source_branch"],
         "cherry_pick": cherry_pick,
         "all_versions": all_versions,
-    }
+    }, None
 
 
 def format_output(item):
@@ -678,21 +668,23 @@ def main():
         if (k := (t.get("metadata") or {}).get("original_bug"))
     }
 
+    skip_reasons = []
     for bug in bugs:
         bug_key = bug.get("key", "")
         if bug_key in existing_bug_keys:
-            print(f"  {bug_key}: already has cascade task, skip", file=sys.stderr)
+            skip_reasons.append(f"{bug_key}:has_cascade_task")
             continue
-        item = process_bug(bug, repos, tasks)
+        item, reason = process_bug(bug, repos, tasks)
         if item:
             content = format_output(item)
             output_result("start", content)
             jira_cleanup()
             return
+        skip_reasons.append(f"{bug_key}:{reason}")
 
     jira_cleanup()
     output_result(
-        "skip", f"Checked {len(bugs)} bugs, none actionable"
+        "skip", f"Checked {len(bugs)} bugs: {'; '.join(skip_reasons)}"
     )
 
 
