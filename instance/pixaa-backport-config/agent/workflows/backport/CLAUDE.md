@@ -95,6 +95,7 @@ When preflight says cherry-pick is CLEAN:
      - Read the current task via `task_get`
      - Append this version to `metadata.completed`
      - Add this version's clone key to `metadata.clone_keys`
+     - If `metadata_healed` is true in preflight data, also update `repo`, `bug_summary`, `bug_labels`, `bug_component` from the preflight values
      - Write back the full metadata via `task_update`
    - If all versions are now completed or delegated, set cascade task status to `done`.
    - Add Jira comment on clone bug with the PR link.

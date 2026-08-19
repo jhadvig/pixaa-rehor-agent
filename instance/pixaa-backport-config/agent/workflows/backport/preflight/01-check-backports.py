@@ -443,17 +443,22 @@ def format_output(item):
     """Format actionable item as structured prompt content."""
     lines = ["## Backport Preflight", ""]
     lines.append(f"### {item['bug_key']}: {item['bug_summary']}")
-    lines.append(f"- repo: {item['repo']} ({item['upstream']})")
-    lines.append(f"- fork: {item['fork_url']}")
-    lines.append(f"- default_branch: {item['default_branch']}")
-    lines.append(
-        f"- original_pr: #{item['original_pr']['number']} ({item['original_pr']['url']})"
-    )
-    lines.append(f"- commits: {', '.join(item['original_pr']['commits'])}")
-    lines.append(f"- component: {item['bug_component']}")
-    lines.append(f"- labels: {', '.join(item['bug_labels'])}")
+    lines.append("")
+    lines.append("**Cascade task metadata** (use these exact values for task_add/task_update):")
+    lines.append(f"- original_bug: {item['bug_key']}")
+    lines.append(f"- repo: {item['repo']}")
+    lines.append(f"- bug_summary: {item['bug_summary']}")
+    lines.append(f"- bug_component: {item['bug_component']}")
+    lines.append(f"- bug_labels: {', '.join(item['bug_labels'])}")
     all_version_strs = [v["version"] for v in item["all_versions"]]
     lines.append(f"- target_versions: {', '.join(all_version_strs)}")
+    lines.append("")
+    lines.append("**Git context:**")
+    lines.append(f"- upstream: {item['upstream']}")
+    lines.append(f"- fork: {item['fork_url']}")
+    lines.append(f"- default_branch: {item['default_branch']}")
+    lines.append(f"- original_pr: #{item['original_pr']['number']} ({item['original_pr']['url']})")
+    lines.append(f"- commits: {', '.join(item['original_pr']['commits'])}")
     lines.append("")
     lines.append(
         f"**Target: {item['target_version']}** -> {item['release_branch']}"
@@ -468,6 +473,8 @@ def format_output(item):
         )
     if item.get("cascade_task_key"):
         lines.append(f"- cascade_task_key: {item['cascade_task_key']}")
+    if item.get("metadata_healed"):
+        lines.append("- metadata_healed: true (update cascade task metadata with current values)")
     if item.get("clone_keys"):
         for ver, key in item["clone_keys"].items():
             lines.append(f"- clone_key[{ver}]: {key}")
@@ -499,8 +506,34 @@ def process_cascade_task(task, repos, tasks):
     bug_labels = meta.get("bug_labels", [])
     bug_component = meta.get("bug_component", "")
 
-    if not bug_key or not target_versions or not repo_name:
-        pod_log(f"  Cascade {task.get('external_key', '?')}: missing metadata (bug={bug_key}, versions={len(target_versions)}, repo={repo_name})")
+    if not bug_key or not target_versions:
+        pod_log(f"  Cascade {task.get('external_key', '?')}: missing critical metadata (bug={bug_key}, versions={len(target_versions)})")
+        return None
+
+    # Self-heal: look up missing fields from Jira
+    if not repo_name or not bug_labels or not bug_component:
+        pod_log(f"  Cascade {bug_key}: missing metadata (repo={repo_name}), looking up from Jira")
+        issue = jira_call(
+            "jira_get_issue",
+            {"issue_key": bug_key, "fields": "summary,labels,components"},
+        )
+        if issue:
+            fields = issue.get("fields", issue)
+            if not repo_name:
+                repo_name = get_repo_from_labels(issue)
+            if not bug_summary:
+                bug_summary = fields.get("summary", issue.get("summary", ""))
+            if not bug_labels:
+                raw = fields.get("labels", [])
+                bug_labels = [(l if isinstance(l, str) else l.get("name", "")) for l in raw]
+            if not bug_component:
+                comps = fields.get("components", [])
+                if comps:
+                    bug_component = comps[0].get("name", "") if isinstance(comps[0], dict) else str(comps[0])
+            pod_log(f"  Cascade {bug_key}: healed metadata (repo={repo_name}, component={bug_component})")
+
+    if not repo_name:
+        pod_log(f"  Cascade {bug_key}: repo still missing after Jira lookup")
         return None
 
     repo_cfg = repos.get(repo_name)
@@ -611,10 +644,7 @@ def process_cascade_task(task, repos, tasks):
     if next_actionable is None:
         return None
 
-    print(
-        f"  {bug_key} (cascade): dry-run cherry-pick to {next_actionable['branch']}...",
-        file=sys.stderr,
-    )
+    pod_log(f"  Dry-run cherry-pick {next_actionable['source_branch']} -> {next_actionable['branch']}...")
     cherry_pick = dry_run_cherry_pick(
         upstream=up,
         release_branch=next_actionable["branch"],
@@ -623,11 +653,16 @@ def process_cascade_task(task, repos, tasks):
     )
 
     if cherry_pick["result"] == "error":
-        print(
-            f"  {bug_key}: dry-run error: {cherry_pick.get('error')}, skip",
-            file=sys.stderr,
-        )
+        pod_log(f"  {bug_key}: dry-run error: {cherry_pick.get('error')}")
         return None
+
+    # Check if metadata was healed and needs updating
+    metadata_healed = (
+        repo_name != meta.get("repo", "")
+        or bug_summary != meta.get("bug_summary", "")
+        or bug_labels != meta.get("bug_labels", [])
+        or bug_component != meta.get("bug_component", "")
+    )
 
     return {
         "bug_key": bug_key,
@@ -650,6 +685,7 @@ def process_cascade_task(task, repos, tasks):
         "all_versions": all_versions,
         "cascade_task_key": task.get("external_key", ""),
         "clone_keys": clone_keys,
+        "metadata_healed": metadata_healed,
     }
 
 
@@ -694,9 +730,13 @@ def main():
             output_result("skip", "Cascade tasks exist but no versions are actionable")
         return
 
-    # Skip bugs that already have a cascade task
+    # Skip bugs that already have a cascade task (active OR done)
+    all_cascade_tasks = [
+        t for t in tasks
+        if (t.get("external_key") or "").startswith(BACKPORT_TASK_PREFIX)
+    ]
     existing_bug_keys = {
-        k for t in cascade_tasks
+        k for t in all_cascade_tasks
         if (k := (t.get("metadata") or {}).get("original_bug"))
     }
 
