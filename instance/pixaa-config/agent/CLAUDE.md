@@ -10,5 +10,8 @@
 
 ## Team Conventions
 
-<!-- Fill in team-specific conventions after scaffolding -->
-<!-- Examples: version managers, test commands, PR review norms -->
+- When maintaining a PR, check if the `jira/valid-bug` or `jira/valid-reference` label is present. If missing:
+  1. Comment `/jira refresh` on the PR to trigger validation
+  2. Read the `openshift-ci-robot` response to identify which Jira fields are missing or incorrect
+  3. Fix the missing fields on the Jira bug (e.g. Fix Version, Target Version, `is blocked by` link direction, status)
+  4. Comment `/jira refresh` again to re-validate
