@@ -541,31 +541,41 @@ def process_cascade_task(task, repos, tasks):
         status_info = {"version": version, "branch": branch, "status": "unknown"}
 
         if version in completed:
-            existing_pr = find_existing_backport_pr(up, bug_key, branch)
+            clone_key = clone_keys.get(version, "")
+            existing_pr = find_existing_backport_pr(up, clone_key, branch) if clone_key else None
+            if not existing_pr:
+                existing_pr = find_existing_backport_pr(up, bug_key, branch)
             if existing_pr and existing_pr.get("state", "").upper() == "MERGED":
                 status_info["status"] = "done"
                 prev_completed_branch = branch
                 status_info["pr"] = existing_pr
                 all_versions.append(status_info)
+                pod_log(f"  {branch}: done (PR #{existing_pr.get('number', '?')} merged)")
                 continue
             # Marked completed but PR not merged — cascade is blocked
             status_info["status"] = "pr_open"
             if existing_pr:
                 status_info["pr"] = existing_pr
             all_versions.append(status_info)
+            pod_log(f"  {branch}: completed but PR not merged — cascade blocked")
             break
 
         if version in delegated:
             status_info["status"] = "delegated"
             all_versions.append(status_info)
+            pod_log(f"  {branch}: delegated to dev agent")
             continue
 
         if not check_branch_exists(up, branch):
             status_info["status"] = "branch_missing"
             all_versions.append(status_info)
+            pod_log(f"  {branch}: branch missing")
             continue
 
-        existing_pr = find_existing_backport_pr(up, bug_key, branch)
+        clone_key = clone_keys.get(version, "")
+        existing_pr = find_existing_backport_pr(up, clone_key, branch) if clone_key else None
+        if not existing_pr:
+            existing_pr = find_existing_backport_pr(up, bug_key, branch)
         if existing_pr:
             pr_state = existing_pr.get("state", "").upper()
             if pr_state == "MERGED":
@@ -577,10 +587,12 @@ def process_cascade_task(task, repos, tasks):
                 status_info["status"] = "pr_open"
             status_info["pr"] = existing_pr
             all_versions.append(status_info)
+            pod_log(f"  {branch}: {status_info['status']} (PR #{existing_pr.get('number', '?')})")
             continue
 
         status_info["status"] = "pending"
         all_versions.append(status_info)
+        pod_log(f"  {branch}: pending")
 
         if next_actionable is None:
             source = prev_completed_branch if prev_completed_branch else default_branch
