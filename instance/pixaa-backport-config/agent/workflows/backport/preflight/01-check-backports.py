@@ -53,6 +53,15 @@ TARGET_BACKPORT_VERSIONS_FIELD = "customfield_10878"
 BOT_LABEL = os.environ.get("BOT_LABEL", "rehor-ai-pixaa")
 
 
+def pod_log(msg):
+    """Write directly to pod log, bypassing subprocess capture."""
+    try:
+        with open("/proc/1/fd/2", "w") as f:
+            f.write(f"[backport-preflight] {msg}\n")
+    except OSError:
+        pass
+
+
 # --- Version helpers ---
 
 def normalize_version(version_str):
@@ -623,15 +632,16 @@ def process_cascade_task(task, repos, tasks):
 
 def main():
     active_n, max_n = get_capacity()
-    print(f"Capacity: {active_n}/{max_n}", file=sys.stderr)
+    pod_log(f"Capacity: {active_n}/{max_n}")
     if active_n >= max_n:
+        pod_log("At capacity, skipping")
         output_result("skip", f"At capacity ({active_n}/{max_n})")
         jira_cleanup()
         return
 
     repos = load_project_repos()
     tasks = get_tasks()
-    print(f"Tasks loaded: {len(tasks)}", file=sys.stderr)
+    pod_log(f"Tasks: {len(tasks)}")
 
     # Query 2: Check existing cascade tasks first (ongoing work has priority)
     cascade_tasks = [
@@ -639,19 +649,20 @@ def main():
         if (t.get("external_key") or "").startswith(BACKPORT_TASK_PREFIX)
         and t.get("status") not in ("done", "archived")
     ]
-    print(f"Cascade tasks: {len(cascade_tasks)}", file=sys.stderr)
+    pod_log(f"Cascade tasks: {len(cascade_tasks)}")
     for task in cascade_tasks:
         item = process_cascade_task(task, repos, tasks)
         if item:
+            pod_log(f"Cascade actionable: {item['bug_key']} -> {item['release_branch']}")
             content = format_output(item)
             output_result("start", content)
             jira_cleanup()
             return
 
     # Query 1: Search for new MODIFIED bugs with Target Backport Versions
-    print("Querying Jira for MODIFIED/Release Pending bugs...", file=sys.stderr)
+    pod_log("Querying Jira...")
     bugs = search_modified_bugs()
-    print(f"Jira returned: {len(bugs) if bugs else 0} bugs", file=sys.stderr)
+    pod_log(f"Jira returned: {len(bugs) if bugs else 0} bugs")
     if not bugs:
         jira_cleanup()
         if not cascade_tasks:
@@ -659,8 +670,6 @@ def main():
         else:
             output_result("skip", "Cascade tasks exist but no versions are actionable")
         return
-
-    print(f"Found {len(bugs)} bugs with backport targets", file=sys.stderr)
 
     # Skip bugs that already have a cascade task
     existing_bug_keys = {
@@ -673,14 +682,17 @@ def main():
         bug_key = bug.get("key", "")
         if bug_key in existing_bug_keys:
             skip_reasons.append(f"{bug_key}:has_cascade_task")
+            pod_log(f"Skip {bug_key}: has_cascade_task")
             continue
         item, reason = process_bug(bug, repos, tasks)
         if item:
+            pod_log(f"Actionable: {bug_key} -> {item['release_branch']} ({item['cherry_pick']['result']})")
             content = format_output(item)
             output_result("start", content)
             jira_cleanup()
             return
         skip_reasons.append(f"{bug_key}:{reason}")
+        pod_log(f"Skip {bug_key}: {reason}")
 
     jira_cleanup()
     output_result(
