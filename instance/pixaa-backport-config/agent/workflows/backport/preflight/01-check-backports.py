@@ -270,6 +270,11 @@ def get_backport_versions(issue):
     versions_raw = fields.get(TARGET_BACKPORT_VERSIONS_FIELD, [])
     if not versions_raw:
         return []
+    # MCP returns {"value": [...]} wrapper — unwrap it
+    if isinstance(versions_raw, dict):
+        versions_raw = versions_raw.get("value", [])
+    if not versions_raw:
+        return []
     versions = []
     for v in versions_raw:
         if isinstance(v, dict):
