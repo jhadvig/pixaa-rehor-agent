@@ -499,8 +499,34 @@ def process_cascade_task(task, repos, tasks):
     bug_labels = meta.get("bug_labels", [])
     bug_component = meta.get("bug_component", "")
 
-    if not bug_key or not target_versions or not repo_name:
-        pod_log(f"  Cascade {task.get('external_key', '?')}: missing metadata (bug={bug_key}, versions={len(target_versions)}, repo={repo_name})")
+    if not bug_key or not target_versions:
+        pod_log(f"  Cascade {task.get('external_key', '?')}: missing critical metadata (bug={bug_key}, versions={len(target_versions)})")
+        return None
+
+    # Self-heal: look up missing fields from Jira
+    if not repo_name or not bug_labels or not bug_component:
+        pod_log(f"  Cascade {bug_key}: missing metadata (repo={repo_name}), looking up from Jira")
+        issue = jira_call(
+            "jira_get_issue",
+            {"issue_key": bug_key, "fields": "summary,labels,components"},
+        )
+        if issue:
+            fields = issue.get("fields", issue)
+            if not repo_name:
+                repo_name = get_repo_from_labels(issue)
+            if not bug_summary:
+                bug_summary = fields.get("summary", issue.get("summary", ""))
+            if not bug_labels:
+                raw = fields.get("labels", [])
+                bug_labels = [(l if isinstance(l, str) else l.get("name", "")) for l in raw]
+            if not bug_component:
+                comps = fields.get("components", [])
+                if comps:
+                    bug_component = comps[0].get("name", "") if isinstance(comps[0], dict) else str(comps[0])
+            pod_log(f"  Cascade {bug_key}: healed metadata (repo={repo_name}, component={bug_component})")
+
+    if not repo_name:
+        pod_log(f"  Cascade {bug_key}: repo still missing after Jira lookup")
         return None
 
     repo_cfg = repos.get(repo_name)
