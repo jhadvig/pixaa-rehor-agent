@@ -468,6 +468,8 @@ def format_output(item):
         )
     if item.get("cascade_task_key"):
         lines.append(f"- cascade_task_key: {item['cascade_task_key']}")
+    if item.get("metadata_healed"):
+        lines.append("- metadata_healed: true (update cascade task metadata with current values)")
     if item.get("clone_keys"):
         for ver, key in item["clone_keys"].items():
             lines.append(f"- clone_key[{ver}]: {key}")
@@ -655,6 +657,14 @@ def process_cascade_task(task, repos, tasks):
         )
         return None
 
+    # Check if metadata was healed and needs updating
+    metadata_healed = (
+        repo_name != meta.get("repo", "")
+        or bug_summary != meta.get("bug_summary", "")
+        or bug_labels != meta.get("bug_labels", [])
+        or bug_component != meta.get("bug_component", "")
+    )
+
     return {
         "bug_key": bug_key,
         "bug_summary": bug_summary,
@@ -676,6 +686,7 @@ def process_cascade_task(task, repos, tasks):
         "all_versions": all_versions,
         "cascade_task_key": task.get("external_key", ""),
         "clone_keys": clone_keys,
+        "metadata_healed": metadata_healed,
     }
 
 
