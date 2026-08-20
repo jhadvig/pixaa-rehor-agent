@@ -257,7 +257,7 @@ def search_modified_bugs():
         "jira_search",
         {
             "jql": (
-                f'project = OCPBUGS AND status IN (MODIFIED, "Release Pending") '
+                f'project = OCPBUGS AND status IN (MODIFIED, "Release Pending", ON_QA) '
                 f'AND component = "{JIRA_COMPONENT}" '
                 f'AND assignee = "{JIRA_ASSIGNEE}" '
                 f'AND "Target Backport Versions" IS NOT EMPTY '
