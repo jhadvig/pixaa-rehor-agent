@@ -17,6 +17,7 @@
   3. Fix the missing fields on the Jira bug (e.g. Fix Version, Target Version, `is blocked by` link direction, status)
   4. Comment `/jira refresh` again to re-validate
 - After a PR merges, do NOT move the bug to `Release Pending`. Leave it at `MODIFIED` (set automatically by Prow). The backport agent and Prow's `jira/valid-bug` check depend on this status.
+- If a test fails, `@openshift-ci` will comment that "The following test failed". If the test fails, read the failure details and analyze them. Determine whether they are valid, and fix issues to pass the test if the issue is valid and not a flake.
 
 ### openshift/console
 All commands below run from the `frontend/` directory.
