@@ -97,7 +97,11 @@ When preflight says cherry-pick is CLEAN:
      - Add this version's clone key to `metadata.clone_keys`
      - If `metadata_healed` is true in preflight data, also update `repo`, `bug_summary`, `bug_labels`, `bug_component` from the preflight values
      - Write back the full metadata via `task_update`
-   - If all versions are now completed or delegated, set cascade task status to `done`.
+   - If all versions are now completed or delegated, remove the cascade task:
+     ```
+     task_rm:
+       external_key: "backport:<ORIGINAL-BUG-KEY>"
+     ```
    - Add Jira comment on clone bug with the PR link.
    - Add Jira comment on the ORIGINAL bug: `Backport PR for <version> opened: <PR-URL> (<CLONE-KEY>)`
 
@@ -133,7 +137,11 @@ When preflight says cherry-pick has CONFLICTS:
      - Append this version to `metadata.delegated`
      - Add this version's clone key to `metadata.clone_keys`
      - Write back the full metadata via `task_update`
-   - If all versions are now completed or delegated, set cascade task status to `done`.
+   - If all versions are now completed or delegated, remove the cascade task:
+     ```
+     task_rm:
+       external_key: "backport:<ORIGINAL-BUG-KEY>"
+     ```
 
 ## Rules
 
