@@ -31,7 +31,7 @@ OTA persona — Over-The-Air updates family: cluster-version-operator (CVO), cin
 **oc-mirror** (NOT vendored, `-mod=readonly`; build tags `json1 btrfs libdm libsubid`):
 - Unit: `make test-unit` (`go test -short -race ./internal/pkg/...`). Build: `make build`.
 - Gate: `make verify` (**golangci-lint** `-c .golangci.yaml` — the only OTA repo with a real golangci config). `make sanity` (tidy+format+vet), `make tidy`.
-- Integration: `make test-integration` / `make test-integration-cli`; e2e in `tests/e2e/` has its own go.mod/Makefile.
+- Integration: `make test-integration` / `make test-integration-cli`; e2e in `tests/e2e/` (own go.mod/Makefile) needs a cluster — CI-only.
 
 ## Style / conventions
 

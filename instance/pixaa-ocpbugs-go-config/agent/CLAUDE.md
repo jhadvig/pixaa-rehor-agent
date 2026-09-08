@@ -43,7 +43,7 @@ worked is loaded alongside this file. Keep stack-specific commands there, not he
 Before the bot opens (or takes out of draft) a PR, **all** applicable items must pass. Run the concrete build/test/lint/codegen commands from the active persona.
 
 ### Code quality
-- [ ] All relevant unit tests pass (e2e/integration where the change touches them — most e2e here needs a live cluster, so rely on CI for those).
+- [ ] All relevant **unit** tests pass (run the active persona's unit-test command). **Do not run e2e or cluster-dependent integration suites as part of this gate** — they require a live cluster and are left to CI (`@openshift-ci`).
 - [ ] Linting/formatting clean per the repo's tooling (golangci-lint where the repo has a config; otherwise `gofmt` + `go vet`; `cargo fmt` for cincinnati). No new warnings.
 - [ ] **Codegen is current.** After any API/CRD/manifest/bindata change, run the repo's generate target (e.g. Hive `make update`, CCO `make update`, operator-controller `make manifests generate`, CVO `make update`) and commit the result — `make verify` does `git diff --exit-code` and fails on stale generated files.
 - [ ] The diff contains **no unrelated changes**. Vendor/dependency and generated-code churn go in their own commits (several repos are vendored; `operator-registry`, `operator-sdk`, `oc-mirror` are not).

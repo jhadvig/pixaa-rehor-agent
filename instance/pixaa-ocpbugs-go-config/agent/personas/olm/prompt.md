@@ -14,7 +14,7 @@ OLM persona — Operator Lifecycle Manager / operator-framework family. Go 1.26.
 - Lint: `make lint` (golangci-lint + custom linter + kube-api-linter; `make fix-lint` to autofix).
 - Codegen: `make manifests` + `make generate` (controller-gen + mockgen). `make verify` (tidy, fmt, generate, manifests, tls-profiles, crd-ref-docs, bingo).
 - e2e: `make test-e2e` (spins its own **kind** cluster; needs `fs.inotify.max_user_instances` raised) — rely on CI.
-- `make test` runs the full chain (manifests generate fmt lint test-unit test-e2e test-regression).
+- ⚠️ Do NOT run `make test` for the pre-PR gate — it runs the full chain including `test-e2e`/`test-regression` (kind cluster). Use `make test-unit` for the gate.
 
 **operator-framework-olm** (monorepo, vendored + nested):
 - Unit: `make unit` (`scripts/unit.sh`). Build: `make build` (opm + olm binaries).
@@ -22,9 +22,9 @@ OLM persona — Operator Lifecycle Manager / operator-framework family. Go 1.26.
 - Codegen: `make generate-manifests`; keep nested staging vendor in sync (`make vendor`, `check-staging-vendor.sh`).
 - e2e: `make e2e` (`scripts/e2e.sh`; `e2e/olm`, `e2e/operator-registry`) — needs a real cluster (`oc`), `E2E_TIMEOUT=135m`.
 
-**operator-registry** (NOT vendored): `make unit`, `make lint` (golangci-lint), `make e2e` (ginkgo), `make verify` (tidy + codegen + `git diff --exit-code`), `make generate-fakes`.
-**operator-marketplace** (vendored): `make unit` / `make unit-test`, `make e2e` / `make e2e-job`, `make vendor`, `make manifests`.
-**operator-sdk** (NOT vendored): `make test-unit`, `make test-static` (sanity+unit+docs), `make lint`, `make generate`, `make test-e2e*` (kind + kuttl scorecard). Uses changelog fragments (`changelog/fragments/*.yaml`) — add one for user-facing changes.
+**operator-registry** (NOT vendored): `make unit`, `make lint` (golangci-lint), `make verify` (tidy + codegen + `git diff --exit-code`), `make generate-fakes`. `make e2e` (ginkgo) needs a cluster — CI-only.
+**operator-marketplace** (vendored): `make unit` / `make unit-test`, `make vendor`, `make manifests`. `make e2e` / `make e2e-job` need a cluster — CI-only.
+**operator-sdk** (NOT vendored): `make test-unit`, `make test-static` (sanity+unit+docs), `make lint`, `make generate`. `make test-e2e*` (kind + kuttl scorecard) needs a cluster — CI-only. Uses changelog fragments (`changelog/fragments/*.yaml`) — add one for user-facing changes.
 
 ## Style / conventions
 
