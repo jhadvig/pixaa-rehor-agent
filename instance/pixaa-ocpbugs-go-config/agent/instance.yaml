@@ -1,0 +1,9 @@
+workflow: jira-kanban
+source: jira
+envs:
+  - go
+  # NOTE: the OTA family includes openshift/cincinnati, which is Rust (Cargo + Justfile).
+  # There is no `rust` env preset in the base engine, so the Rust toolchain (rustup/cargo/just)
+  # is installed at image-build time by the repo-root setup.sh instead of via an env here.
+claude_md:
+  strategy: append
