@@ -4,6 +4,5 @@ envs:
   - node
   - browser
   - go
-  - patternfly-mcp
 claude_md:
   strategy: append
