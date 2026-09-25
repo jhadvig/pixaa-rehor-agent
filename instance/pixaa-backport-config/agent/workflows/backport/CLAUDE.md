@@ -97,10 +97,11 @@ When preflight says cherry-pick is CLEAN:
      - Add this version's clone key to `metadata.clone_keys`
      - If `metadata_healed` is true in preflight data, also update `repo`, `bug_summary`, `bug_labels`, `bug_component` from the preflight values
      - Write back the full metadata via `task_update`
-   - If all versions are now completed or delegated, remove the cascade task:
+   - If all versions are now completed or delegated, archive the cascade task instead of deleting it — this preserves the record that the original bug has already been fully backported, so preflight's `existing_bug_keys` check keeps skipping it on future cycles instead of re-processing it as new work:
      ```
-     task_rm:
+     task_update:
        external_key: "backport:<ORIGINAL-BUG-KEY>"
+       status: "archived"
      ```
    - Add Jira comment on clone bug with the PR link.
    - Add Jira comment on the ORIGINAL bug: `Backport PR for <version> opened: <PR-URL> (<CLONE-KEY>)`
@@ -137,10 +138,11 @@ When preflight says cherry-pick has CONFLICTS:
      - Append this version to `metadata.delegated`
      - Add this version's clone key to `metadata.clone_keys`
      - Write back the full metadata via `task_update`
-   - If all versions are now completed or delegated, remove the cascade task:
+   - If all versions are now completed or delegated, archive the cascade task instead of deleting it (see rationale above):
      ```
-     task_rm:
+     task_update:
        external_key: "backport:<ORIGINAL-BUG-KEY>"
+       status: "archived"
      ```
 
 ## Rules
