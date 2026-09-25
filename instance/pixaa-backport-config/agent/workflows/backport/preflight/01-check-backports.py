@@ -141,19 +141,25 @@ def get_pr_commits(repo, pr_number):
 
 
 def find_existing_backport_pr(repo, bug_key, release_branch):
-    """Check if a backport PR already exists for this bug+branch."""
+    """Check if a backport PR already exists for this bug+branch.
+
+    Matches on title (carries the clone bug's key, e.g. "OCPBUGS-127461: ...")
+    or body (always references the original bug via "Backport of <KEY>"),
+    since callers may only have the original bug's key on hand.
+    """
     prs = gh_json([
         "pr", "list", "--repo", repo,
         "--base", release_branch,
         "--search", bug_key,
         "--state", "all",
-        "--json", "number,url,title,state",
+        "--json", "number,url,title,state,body",
         "--limit", "5",
     ])
     if not prs:
         return None
+    pattern = re.compile(rf"\b{re.escape(bug_key)}\b")
     for pr in prs:
-        if bug_key in pr.get("title", ""):
+        if pattern.search(pr.get("title", "")) or pattern.search(pr.get("body", "") or ""):
             return pr
     return None
 
