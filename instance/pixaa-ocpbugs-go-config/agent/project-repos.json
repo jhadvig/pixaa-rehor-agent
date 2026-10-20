@@ -1,0 +1,54 @@
+{
+  "operator-framework-operator-controller": {
+    "url": "https://github.com/platex-rehor-bot/operator-framework-operator-controller.git",
+    "upstream": "https://github.com/openshift/operator-framework-operator-controller.git"
+  },
+  "operator-framework-olm": {
+    "url": "https://github.com/platex-rehor-bot/operator-framework-olm.git",
+    "upstream": "https://github.com/openshift/operator-framework-olm.git"
+  },
+  "operator-registry": {
+    "url": "https://github.com/platex-rehor-bot/operator-registry.git",
+    "upstream": "https://github.com/operator-framework/operator-registry.git"
+  },
+  "operator-marketplace": {
+    "url": "https://github.com/platex-rehor-bot/operator-marketplace.git",
+    "upstream": "https://github.com/operator-framework/operator-marketplace.git"
+  },
+  "operator-sdk": {
+    "url": "https://github.com/platex-rehor-bot/operator-sdk.git",
+    "upstream": "https://github.com/operator-framework/operator-sdk.git"
+  },
+  "hive": {
+    "url": "https://github.com/platex-rehor-bot/hive.git",
+    "upstream": "https://github.com/openshift/hive.git"
+  },
+  "cloud-credential-operator": {
+    "url": "https://github.com/platex-rehor-bot/cloud-credential-operator.git",
+    "upstream": "https://github.com/openshift/cloud-credential-operator.git"
+  },
+  "azure-workload-identity": {
+    "url": "https://github.com/platex-rehor-bot/azure-workload-identity.git",
+    "upstream": "https://github.com/openshift/azure-workload-identity.git"
+  },
+  "cluster-version-operator": {
+    "url": "https://github.com/platex-rehor-bot/cluster-version-operator.git",
+    "upstream": "https://github.com/openshift/cluster-version-operator.git"
+  },
+  "cincinnati": {
+    "url": "https://github.com/platex-rehor-bot/cincinnati.git",
+    "upstream": "https://github.com/openshift/cincinnati.git"
+  },
+  "cincinnati-operator": {
+    "url": "https://github.com/platex-rehor-bot/cincinnati-operator.git",
+    "upstream": "https://github.com/openshift/cincinnati-operator.git"
+  },
+  "oc": {
+    "url": "https://github.com/platex-rehor-bot/oc.git",
+    "upstream": "https://github.com/openshift/oc.git"
+  },
+  "oc-mirror": {
+    "url": "https://github.com/platex-rehor-bot/oc-mirror.git",
+    "upstream": "https://github.com/openshift/oc-mirror.git"
+  }
+}
